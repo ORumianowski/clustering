@@ -1,0 +1,23 @@
+Package: pochard
+Type: Package
+Title: Integrated Connectivity and Population Model applied to the Common Pochard (Aythya ferina)
+Version: 0.0.0.9000
+Authors@R: c(
+    person(given   = "Carole",
+           family  = "Doucerain",
+           role    = c("aut", "cre", "cph"),
+           email   = "carole.doucerain@cefe.cnrs.fr",
+           comment = c(ORCID = "0000-0002-2966-3356")))
+Description: to write
+License: GPL-2
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports: 
+    dplyr,
+    here,
+    purrr,
+    tibble
+Depends:
+    tidyverse
+

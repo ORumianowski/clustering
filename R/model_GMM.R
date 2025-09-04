@@ -47,6 +47,21 @@ for(i in 1:n) {
   X[i,] <- mvrnorm(1, mu = true_means[[z_true[i]]], Sigma = true_covs[[z_true[i]]])
 }
 
+# Créer les NA de façon aléatoire
+
+# X_miss <- X 
+# for(i in 1:n){
+#   # Couple 1-2 
+#   if(runif(1) < 0.10){
+#     X_miss[i, 1:2] <- NA
+#   }
+#   
+#   # Couple 3-4 
+#   if(runif(1) < 0.15){
+#     X_miss[i, 3:4] <- NA
+#   }
+# }
+
 # ============================================================
 # 2. Définition du modèle NIMBLE
 # ============================================================
@@ -93,8 +108,19 @@ constants <- list(
 data <- list(X = X)
 
 # Initialisation (z aléatoire)
-inits <- list(z = sample(1:K, n, replace = TRUE))
-
+inits <- list(z = sample(1:K, n, replace = TRUE)
+              # mu = matrix(0, nrow=K, ncol=d),
+              # Prec = array(rep(diag(d), K), dim=c(K,d,d)),
+              # X = {
+              #   # remplace NA par la moyenne de colonne au départ (optionnel)
+              #   Xm <- X_miss
+              #   for (j in 1:d) {
+              #     m <- mean(Xm[, j], na.rm = TRUE)
+              #     Xm[is.na(Xm[, j]), j] <- ifelse(is.finite(m), m, 0)
+              #   }
+              #   Xm
+              # }
+)
 # ============================================================
 # 4. Compilation du modèle et MCMC
 # ============================================================

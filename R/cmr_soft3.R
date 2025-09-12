@@ -164,7 +164,7 @@ samples <- runMCMC(Cmcmc,
                    progressBar = TRUE)
 
 # ----- RÉSULTATS -----
-print(samples$summary)
+# print(samples$summary)
 
 library(ggplot2)
 library(tidyr)
@@ -229,4 +229,165 @@ plot_params(df_long, "sigma")
 plot_params(df_long, "phi")
 plot_params(df_long, "pi")
 plot_params(df_long, "p")
+
+
+# ---- ALGORITHME DE RÉALIGNEMENT DES CLUSTERS ----
+
+# Fonction pour trouver la meilleure permutation des labels
+find_best_permutation <- function(mu_samples, mu_true) {
+  K <- nrow(mu_true)
+  permutations <- combinat::permn(1:K)  # toutes les permutations possibles
+  
+  best_perm <- NULL
+  best_error <- Inf
+  
+  for(perm in permutations) {
+    error <- sum((mu_samples[perm,] - mu_true)^2)
+    if(error < best_error) {
+      best_error <- error
+      best_perm <- perm
+    }
+  }
+  
+  return(best_perm)
+}
+
+# Calcul des moyennes médianes par cluster
+mu_est <- matrix(NA, nrow = K, ncol = d)
+for(k in 1:K) {
+  for(j in 1:d) {
+    mu_est[k, j] <- median(samples_df[, paste0("mu[", k, ", ", j, "]")])
+  }
+}
+
+# Trouver la meilleure permutation
+best_permutation <- find_best_permutation(mu_est, do.call(rbind, mu_true))
+cat("Meilleure permutation des labels:", best_permutation, "\n")
+
+# ---- RÉALIGNEMENT DES VALEURS VRAIES ----
+
+# Réorganiser les vraies valeurs selon la permutation
+true_values_aligned <- c(
+  # mu
+  "mu[1, 1]" = mu_true[[1]][1], 
+  "mu[1, 2]" = mu_true[[1]][2],
+  "mu[1, 3]" = mu_true[[1]][3],
+  "mu[1, 4]" = mu_true[[1]][4],
+  "mu[2, 1]" = mu_true[[2]][1],
+  "mu[2, 2]" = mu_true[[2]][2],
+  "mu[2, 3]" = mu_true[[2]][3],
+  "mu[2, 4]" = mu_true[[2]][4],
+  "mu[3, 1]" = mu_true[[3]][1],
+  "mu[3, 2]" = mu_true[[3]][2],
+  "mu[3, 3]" = mu_true[[3]][3],
+  "mu[3, 4]" = mu_true[[3]][4],
+  
+  # p
+  "p" = 0.6,
+  
+  # phi
+  "phi[1]" = phi_true[1],
+  "phi[2]" = phi_true[2],
+  "phi[3]" = phi_true[3],
+  
+  # pi
+  "pi[1]" = pi_true[1],
+  "pi[2]" = pi_true[2],
+  "pi[3]" = pi_true[3],
+  
+  # sigma
+  "sigma[1, 1]" = Sigma_true[[1]][1,1],
+  "sigma[1, 2]" = Sigma_true[[1]][2,2],
+  "sigma[1, 3]" = Sigma_true[[1]][3,3],
+  "sigma[1, 4]" = Sigma_true[[1]][4,4],
+  "sigma[2, 1]" = Sigma_true[[2]][1,1],
+  "sigma[2, 2]" = Sigma_true[[2]][2,2],
+  "sigma[2, 3]" = Sigma_true[[2]][3,3],
+  "sigma[2, 4]" = Sigma_true[[2]][4,4],
+  "sigma[3, 1]" = Sigma_true[[3]][1,1],
+  "sigma[3, 2]" = Sigma_true[[3]][2,2],
+  "sigma[3, 3]" = Sigma_true[[3]][3,3],
+  "sigma[3, 4]" = Sigma_true[[3]][4,4]
+)
+
+
+# ---- RÉALIGNEMENT DES ÉCHANTILLONS MCMC ----
+
+# Créer une nouvelle dataframe avec les échantillons réalignés
+samples_aligned <- samples_df
+
+# Réaligner les paramètres de cluster
+for(k in 1:K) {
+  new_k <- which(best_permutation == k)  # quel cluster devient k
+  
+  # Réaligner mu
+  for(j in 1:d) {
+    old_name <- paste0("mu[", new_k, ", ", j, "]")
+    new_name <- paste0("mu[", k, ", ", j, "]")
+    samples_aligned[[new_name]] <- samples_df[[old_name]]
+  }
+  
+  # Réaligner phi
+  old_phi <- paste0("phi[", new_k, "]")
+  new_phi <- paste0("phi[", k, "]")
+  samples_aligned[[new_phi]] <- samples_df[[old_phi]]
+  
+  # Réaligner pi
+  old_pi <- paste0("pi[", new_k, "]")
+  new_pi <- paste0("pi[", k, "]")
+  samples_aligned[[new_pi]] <- samples_df[[old_pi]]
+  
+  # Réaligner sigma
+  for(j in 1:d) {
+    old_sigma <- paste0("sigma[", new_k, ", ", j, "]")
+    new_sigma <- paste0("sigma[", k, ", ", j, "]")
+    samples_aligned[[new_sigma]] <- samples_df[[old_sigma]]
+  }
+}
+
+# ---- VISUALISATION AVEC CLUSTERS RÉALIGNÉS ----
+
+df_long_aligned <- samples_aligned %>%
+  pivot_longer(cols = everything(),
+               names_to = "param", values_to = "value") %>%
+  mutate(true_value = true_values_aligned[param],
+         group = case_when(
+           grepl("^mu", param) ~ "mu",
+           grepl("^sigma", param) ~ "sigma",
+           grepl("^phi", param) ~ "phi",
+           grepl("^pi", param) ~ "pi",
+           param == "p" ~ "p"
+         ))
+
+# ---- plots par type avec clusters réalignés ----
+plot_params(df_long_aligned, "mu") +
+  ggtitle("Distributions postérieures des moyennes (clusters réalignés)")
+
+plot_params(df_long_aligned, "sigma") +
+  ggtitle("Distributions postérieures des variances (clusters réalignés)")
+
+plot_params(df_long_aligned, "phi") +
+  ggtitle("Distributions postérieures des survies (clusters réalignés)")
+
+plot_params(df_long_aligned, "pi") +
+  ggtitle("Distributions postérieures des proportions (clusters réalignés)")
+
+plot_params(df_long_aligned, "p") +
+  ggtitle("Distribution postérieure de la probabilité de détection")
+
+# ---- ÉVALUATION QUANTITATIVE ----
+cat("=== PERFORMANCE DU MODÈLE ===\n")
+
+# Calcul des biais
+estimates <- df_long_aligned %>%
+  group_by(param) %>%
+  summarise(median_est = median(value),
+            true_val = first(true_value)) %>%
+  mutate(bias = median_est - true_val,
+         relative_bias = abs(bias)/true_val * 100)
+
+print(estimates)
+
+cat("\Biais moyen absolu:", mean(abs(estimates$bias)), "\n")
+cat("Biais relatif moyen:", mean(estimates$relative_bias, na.rm = TRUE), "%\n")
 

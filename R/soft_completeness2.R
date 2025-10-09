@@ -6,6 +6,8 @@ library(nimble)
 library(MASS)
 library(terra)
 library(mvtnorm)
+library(ggplot2)
+library(patchwork)
 
 set.seed(123)
 
@@ -17,14 +19,14 @@ D <- 2
 K <- 2
 
 true_mu <- list(c(-2, 0),
-                c( 3, 3))
+                c( 0.5, 1))
 true_sigma <- list(
   matrix(c(0.8,  0.4,
            0.4,  0.6), 2, 2, byrow = TRUE),
   matrix(c(1.5, -0.5,
            -0.5,  1.2), 2, 2, byrow = TRUE)
 )
-true_pi <- c(0.45, 0.55)
+true_pi <- c(0.30, 0.55)
 
 z <- sample(1:K, N_tot, replace = TRUE, prob = true_pi)
 X_all <- t(vapply(
@@ -32,6 +34,12 @@ X_all <- t(vapply(
   function(i) MASS::mvrnorm(1, true_mu[[z[i]]], true_sigma[[z[i]]]),
   numeric(D)
 ))
+
+df <- as.data.frame(X_all)
+colnames(df) <- c("x1", "x2")
+p_X_all =  ggplot(df, aes(x = x1, y = x2)) +
+  geom_point(color = "blue", size = 1) +
+  theme_minimal()
 
 # --------------------------------------------------
 # 2) Raster Ω(x) vectorisé + rejet Bernoulli
@@ -47,17 +55,18 @@ colnames(xy_grid) <- c("x","y")
 
 # >>> omega_fun VECTORISÉE (celle d'avant) <<<
 omega_fun <- function(x, y){
-  base <- 0.9
-  spot <- 0.6 * exp(-((x - 3)^2 + (y - 3)^2) / 4)
+  base <- 0.3
+  spot1 <- 3 * exp(-((x - (-2.5))^2 + (y - 2.5)^2) / 4)
+  spot2 <- 0.8 * exp(-((x - (-2.5))^2 + (y - (-0.25))^2) / 4)
   left <- (x < 0)
-  val <- pmin(1, base + spot)
-  val[left] <- val[left] * 0.99
+  val <- pmin(1, base + spot1)
+  val <- pmax(0, val - spot2)
+  val[left] <- val[left] * 0.30
   val
 }
 
 omega_vals <- with(xy_grid, omega_fun(x, y))
 r[] <- omega_vals
-plot(r)
 
 Omega_all <- terra::extract(r, X_all, method = "simple")[,1]
 keep <- runif(N_tot) < Omega_all
@@ -66,15 +75,72 @@ N <- nrow(X)
 Omega_vec <- Omega_all[keep]
 cat("Nombre de points observés après Ω :", N, "\n")
 
+df <- as.data.frame(X)
+colnames(df) <- c("x1", "x2")
+p_X = ggplot(df, aes(x = x1, y = x2)) +
+  geom_point(color = "blue", size = 1) +
+  theme_minimal()
+
+# === A) Préparer un ggplot du raster Ω ===
+# -> convertir le raster terra en data.frame pour ggplot
+r_df <- as.data.frame(r, xy = TRUE)
+names(r_df)[3] <- "omega"
+
+p_omega <- ggplot(r_df, aes(x = x, y = y, fill = omega)) +
+  geom_raster() +
+  coord_equal() +
+  scale_fill_viridis_c(name = "Ω", limits = c(0, 1)) +
+  theme_minimal() +
+  labs(title = "Raster Ω(x)")
+
+# === B) Superposer les points après Ω sur le fond Ω ===
+# (on utilise les points X = après rejet)
+df_after <- as.data.frame(X)
+colnames(df_after) <- c("x1", "x2")
+
+p_omega_after <- p_omega +
+  geom_point(data = df_after, aes(x = x1, y = x2),
+             inherit.aes = FALSE, size = 0.7) +
+  labs(title = "Points retenus sur fond Ω")
+
+# (Optionnel) superposer AVANT + APRÈS avec des couleurs différentes :
+df_before <- as.data.frame(X_all); colnames(df_before) <- c("x1", "x2")
+p_omega_before_after <- p_omega +
+  geom_point(data = df_before, aes(x = x1, y = x2),
+             inherit.aes = FALSE, size = 0.6, alpha = 0.25) +
+  geom_point(data = df_after,  aes(x = x1, y = x2),
+             inherit.aes = FALSE, size = 0.7) +
+  labs(title = "Avant (transparent) + Après (plein) sur Ω")
+
+# === C) Composition des figures ===
+# 1) Avant vs Après (comme tu l’avais : p_X_all + p_X)
+fig_av_ap <- p_X_all + p_X
+
+# 2) Plot combiné avec Ω (choisis l’un des deux ci-dessous)
+fig_omega_apres <- p_omega_after
+# ou, pour voir avant+après en même temps :
+fig_omega_avant_apres <- p_omega_before_after
+
+# 3) Tout ensemble en une figure : avant/après en haut, Ω+points en bas
+(fig_av_ap / fig_omega_apres) +
+  plot_layout(heights = c(1, 1.15))
+
+
 # Constantes pour Z
+## Aire d'un pixel
 A_cell <- prod(res(r))
+## Nombre de pixels
 M <- ncell(r)
+# Coordonnées des pixels
 grid <- as.matrix(xy_grid)
+# Valeurs des pixels (d'effort d'échantillonnage)
 omega_grid <- as.numeric(omega_vals)
 
 # --------------------------------------------------
 # 3) Fonction R pour log Z(θ,Ω) (post-traitement)
 # --------------------------------------------------
+# A partir de omega et des paramtres des guassiennes: calcule log(Z)
+
 compute_logZ <- function(pi, mu, Prec){
   dens_mix <- rowSums(sapply(1:K, function(k){
     mvtnorm::dmvnorm(grid, mean = mu[k,], sigma = solve(Prec[,,k]), log = FALSE) * pi[k]

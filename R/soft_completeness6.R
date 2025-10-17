@@ -414,7 +414,7 @@ p7 <- ggplot() +
                aes(x = x, y = y, group = interaction(comp, level), alpha = alpha),
                fill = "grey20") + scale_alpha_identity() +
   geom_point(data = df_true_cent, aes(x = x, y = y),
-             color = "red", shape = 4, size = 3.0, stroke = 1.0) +
+             color = "grey20", shape = 4, size = 3.0, stroke = 1.0) +
   coord_equal(xlim = c(xmin, xmax), ylim = c(ymin, ymax), expand = FALSE) +
   theme_minimal(base_size = 12) + labs(x = "x", y = "y")
 

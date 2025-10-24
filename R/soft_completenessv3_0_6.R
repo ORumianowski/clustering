@@ -1,14 +1,11 @@
 # ==================================================
 # Modèle NIMBLE propre (GMM 4D + zeros-trick + Ω)
-# - pmax() → max() (fix compilation)
-# - ss passé dans constants (supprime le warning "non-constant indexes")
-# - Grille LxL appariée pour normalisation
 # ==================================================
 
 set.seed(123)
 suppressPackageStartupMessages({
   library(MASS)
-  library(Matrix)   # nearPD
+  library(Matrix)   
   library(terra)
   library(nimble)
 })
@@ -45,39 +42,45 @@ N_tot <- 3000
 pi_true <- c(0.20, 0.45, 0.35)
 
 mu <- list(
-  c(-3.5,  0.0,  -3.0,  1.2),
-  c( 0.0, -0.6,   0.2, -0.4),
-  c( 3.5,  0.0,   3.2,  0.3)
+  c(-3.5,  0.0,  0.5 - 2.5,  0.0),  
+  c( 0.0, -0.6,  0.5 - 2.5,  0.0),   
+  c( 3.5,  0.0,  6.0 - 2.5,  3.0)    
 )
+
 for(k in 1:K) mu[[k]][4] <- mu[[k]][4] - 30
 
-sd1 <- c(0.7, 2.8, 2.6, 1.9)
+sd1 <- c(0.7, 2.8, 1.0, 2.0)
 R1 <- matrix(c(
   1.00,  0.00,  0.55, -0.15,
   0.00,  1.00,  0.10,  0.30,
-  0.55,  0.10,  1.00,  0.65,
-  -0.15,  0.30,  0.65,  1.00
+  0.55,  0.10,  1.00,  0.20,  
+  -0.15,  0.30,  0.20,  1.00
 ), 4, 4, byrow = TRUE)
 Sigma1 <- build_sigma(sd1, R1)
 
-sd2 <- c(2.6, 2.4, 0.8, 3.0)
+
+sd2 <- c(2.6, 2.4, 1.0, 2.0)
 R2 <- matrix(c(
   1.00, -0.70,  0.40, -0.35,
   -0.70,  1.00, -0.10,  0.45,
-  0.40, -0.10,  1.00,  0.00,
-  -0.35,  0.45,  0.00,  1.00
+  0.40, -0.10,  1.00,  0.20,  
+  -0.35,  0.45,  0.20,  1.00
 ), 4, 4, byrow = TRUE)
 Sigma2 <- build_sigma(sd2, R2)
 
-sd3 <- c(0.8, 3.2, 3.1, 0.9)
+
+sd3 <- c(0.8, 3.2, 0.6, 2.8)
 R3 <- matrix(c(
   1.00,  0.00,  0.50,  0.05,
   0.00,  1.00, -0.20,  0.25,
-  0.50, -0.20,  1.00,  0.05,
-  0.05,  0.25,  0.05,  1.00
+  0.50, -0.20,  1.00,  0.00,  
+  0.05,  0.25,  0.00,  1.00
 ), 4, 4, byrow = TRUE)
 Sigma3 <- build_sigma(sd3, R3)
+
 Sigma <- list(Sigma1, Sigma2, Sigma3)
+
+
 
 z <- sample(1:K, N_tot, replace = TRUE, prob = pi_true)
 X4_all <- t(vapply(
@@ -91,7 +94,7 @@ X_wi_all <- X4_all[, 3:4, drop = FALSE]
 # ==================================================
 # 2) Ω(x, saison) + Filtrage
 # ==================================================
-build_omega_summer <- function(xmin, xmax, ymin, ymax, nx = 60, ny = 60){
+build_omega_summer <- function(xmin, xmax, ymin, ymax, nx = 60, ny = 60, global_intensity = 0.6){
   r <- rast(nrows = ny, ncols = nx, xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax)
   xy <- as.data.frame(xyFromCell(r, 1:ncell(r))); colnames(xy) <- c("x","y")
   omega_fun <- function(x, y){
@@ -101,12 +104,12 @@ build_omega_summer <- function(xmin, xmax, ymin, ymax, nx = 60, ny = 60){
     bumpC <- 1.00 * gauss2d(x, y, c( 0.0,-3.2), diag(c(6.0, 0.9)))
     pmax(0, pmin(base + bumpL + bumpR + bumpC, 0.70))
   }
-  r[] <- with(xy, omega_fun(x, y))
+  r[] <- with(xy, omega_fun(x, y)) * global_intensity
   r
 }
-build_omega_winter <- function(xmin, xmax, ymin, ymax, nx = 60, ny = 60, mu, enlarge = 1.0){
-  center_wi_1 <- c(mu[[1]][3], mu[[1]][4]) + c( 0.6, -1.5)
-  Sigma_wi_1  <- make_cov2D(angle_deg =  1, var_major = 5.0*enlarge, var_minor = 2.0*enlarge)
+build_omega_winter <- function(xmin, xmax, ymin, ymax, nx = 60, ny = 60, mu, enlarge = 1.0, global_intensity = 0.2){
+  center_wi_1 <- c(4, -26)
+  Sigma_wi_1  <- make_cov2D(angle_deg =  1, var_major = 2.0*enlarge, var_minor = 2.0*enlarge)
   base_wi <- 0.04; cap_wi <- 0.90; amp1 <- 1.00
   r <- rast(nrows = ny, ncols = nx, xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax)
   xy <- as.data.frame(xyFromCell(r, 1:ncell(r))); colnames(xy) <- c("x","y")
@@ -115,7 +118,7 @@ build_omega_winter <- function(xmin, xmax, ymin, ymax, nx = 60, ny = 60, mu, enl
     val <- val + amp1 * gauss2d(x, y, center_wi_1, Sigma_wi_1)
     pmax(0, pmin(val, cap_wi))
   }
-  r[] <- with(xy, omega_fun(x, y))
+  r[] <- with(xy, omega_fun(x, y)) * global_intensity
   r
 }
 pad <- 1
@@ -141,6 +144,91 @@ obs_hiver<- data.frame(id=which(sel_hiver), saison="hiver",
                        Omega=Omega_wi_all[sel_hiver])
 obs_long <- rbind(obs_ete, obs_hiver)
 N <- nrow(obs_long)
+
+
+
+# -------------------------------------------------------------------------
+
+# ==================================================
+# (A) VISU IMMÉDIATE — Points simulés & fonds Ω
+#     (à mettre juste après: N <- nrow(obs_long))
+# ==================================================
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(viridisLite)
+})
+
+# Emprise commune (carrée)
+pad <- 1
+xmin_all <- min(c(X_su_all[,1], X_wi_all[,1])) - pad
+xmax_all <- max(c(X_su_all[,1], X_wi_all[,1])) + pad
+ymin_all <- min(c(X_su_all[,2], X_wi_all[,2])) - pad
+ymax_all <- max(c(X_su_all[,2], X_wi_all[,2])) + pad
+xlim_all <- c(xmin_all, xmax_all)
+ylim_all <- c(ymin_all, ymax_all)
+
+theme_sq <- theme_minimal(base_size = 12) + theme(aspect.ratio = 1)
+cols_season <- c("été" = "orange", "hiver" = "darkblue")
+
+# Points AVANT Ω (population simulée)
+before_df <- rbind(
+  data.frame(x = X_su_all[,1], y = X_su_all[,2], saison = "été"),
+  data.frame(x = X_wi_all[,1], y = X_wi_all[,2], saison = "hiver")
+)
+p_before <- ggplot(before_df, aes(x = x, y = y, color = saison)) +
+  geom_point(size = 0.55, alpha = 0.85) +
+  scale_color_manual(values = cols_season) +
+  coord_equal(xlim = xlim_all, ylim = ylim_all, expand = FALSE) +
+  theme_sq + labs(title = "AVANT Ω — Été & Hiver", x = "x", y = "y", color = "Saison")
+
+# Fonds Ω (été / hiver)
+su_r_df <- as.data.frame(r_su, xy = TRUE); names(su_r_df)[3] <- "omega"
+wi_r_df <- as.data.frame(r_wi, xy = TRUE); names(wi_r_df)[3] <- "omega"
+
+p_su_omega <- ggplot(su_r_df, aes(x = x, y = y, fill = omega)) +
+  geom_raster() +
+  coord_equal(xlim = xlim_all, ylim = ylim_all, expand = FALSE) +
+  scale_fill_viridis_c(name = "Ω (été)") +
+  theme_sq + labs(title = "Fond Ω — ÉTÉ", x = "x", y = "y")
+
+p_wi_omega <- ggplot(wi_r_df, aes(x = x, y = y, fill = omega)) +
+  geom_raster() +
+  coord_equal(xlim = xlim_all, ylim = ylim_all, expand = FALSE) +
+  scale_fill_viridis_c(name = "Ω (hiver)") +
+  theme_sq + labs(title = "Fond Ω — HIVER", x = "x", y = "y")
+
+# Points APRÈS Ω (observations retenues)
+
+
+after_df <- rbind(
+  transform(obs_long, x = x_su, y = y_su, saison = "été")[, c("x","y","saison")],
+  transform(obs_long, x = x_wi, y = y_wi, saison = "hiver")[, c("x","y","saison")]
+)
+
+p_after <- ggplot(after_df, aes(x = x, y = y, color = saison)) +
+  geom_point(size = 0.6, alpha = 0.9) +
+  scale_color_manual(values = cols_season) +
+  coord_equal(xlim = xlim_all, ylim = ylim_all, expand = FALSE) +
+  theme_sq +
+  labs(title = "APRÈS Ω — Été & Hiver", x = "x", y = "y", color = "Saison")
+
+
+
+# Assemblage 2x2 simple sans dépendre de patchwork
+# (affiche l’un après l’autre si vous n’avez pas 'patchwork')
+print(p_before)
+print(p_after)
+print(p_su_omega)
+print(p_wi_omega)
+
+# Si tu as {patchwork}, décommente pour un seul panneau :
+# library(patchwork)
+# fig_points_top <- (p_before | p_after) / (p_su_omega | p_wi_omega)
+# print(fig_points_top)
+
+
+# -------------------------------------------------------------------------
+
 
 
 # ==================================================
@@ -200,10 +288,12 @@ logZ_calc <- nimbleFunction(
     x2 <- numeric(2)
     sumZ <- 0.0
     for(m in 1:M){
-      x2[1] <- grid[m,1]; x2[2] <- grid[m,2]
+      x2[1] <- grid[m,1]
+      x2[2] <- grid[m,2]
       mix <- 0
       for(k in 1:K){
-        mean2[1] <- mu[k,d1]; mean2[2] <- mu[k,d2]
+        mean2[1] <- mu[k,d1]
+        mean2[2] <- mu[k,d2]
         Prec2[1,1] <- Prec[d1,d1,k]
         Prec2[1,2] <- Prec[d1,d2,k]
         Prec2[2,1] <- Prec[d2,d1,k]
@@ -228,7 +318,6 @@ code_corrige <- nimbleCode({
   logZ[1] <- logZ_su
   logZ[2] <- logZ_wi
   
-  # ---- dans le model code ----
   for(i in 1:N){
     for(k in 1:K){
       dens[i,k] <- pi[k] * exp(dmvnorm_nimble(X[i,1:D], mu[k,1:D],
@@ -236,7 +325,7 @@ code_corrige <- nimbleCode({
     }
     mixdens[i] <- sum(dens[i,1:K])
     ll[i]      <- log(Omega[i]*mixdens[i] + 1e-300) - logZ[ss[i]]
-    # Décalage : phi = C - min(ll, C)  (=> log p(0|phi) = ll - C)
+
     phi[i]     <- (Cclip - min(ll[i], Cclip)) + 1e-6
     zeros[i]   ~ dpois(phi[i])
   }
@@ -257,7 +346,6 @@ code_naif <- nimbleCode({
     }
     mixdens[i] <- sum(dens[i,1:K])
     
-    # Naïf : on ignore Ω et toute normalisation spatiale
     ll[i]    <- log(mixdens[i] + 1e-300)
     phi[i]   <- (Cclip - min(ll[i], Cclip)) + 1e-6
     zeros[i] ~ dpois(phi[i])   # zeros-trick
@@ -272,7 +360,6 @@ code_naif <- nimbleCode({
 
 # ==================================================
 # 5) Données/constantes pour NIMBLE
-#    (ss passe dans constants → plus de warning "non-constant indexes")
 # ==================================================
 constants <- list(
   N=N, D=D, K=K,
@@ -290,14 +377,11 @@ data_list <- list(
   zeros=as.integer(zeros),
   grid_su=grid_su, grid_wi=grid_wi,
   omega_su_grid=omega_su_grid, omega_wi_grid=omega_wi_grid
-  
-  
 )
-
 
 data_list_naif <- list(
   X = X,
-  zeros = as.integer(zeros)   # on réutilise le même vecteur zeros
+  zeros = as.integer(zeros)   
 )
 # mêmes 'constants' que le modèle corrigé (Cclip, etc.)
 
@@ -305,12 +389,6 @@ data_list_naif <- list(
 # 6) Inits
 # ==================================================
 suppressPackageStartupMessages(library(mclust))
-
-## =========================
-## INITS via GMM (EM, mclust)
-## =========================
-suppressPackageStartupMessages(library(mclust))
-set.seed(42)
 
 # EM GMM avec covariances pleines
 em <- Mclust(X, G = K, modelNames = "VVV", verbose = FALSE)
@@ -723,16 +801,17 @@ p_wi_omega <- ggplot(wi_r_df, aes(x = x, y = y, fill = omega)) +
 
 # APRÈS Ω (observations effectives)
 after_df <- rbind(
-  transform(obs_long[obs_long$saison == "été", ],
-            x = x_su, y = y_su)[, c("x","y","saison")],
-  transform(obs_long[obs_long$saison == "hiver", ],
-            x = x_wi, y = y_wi)[, c("x","y","saison")]
+  transform(obs_long, x = x_su, y = y_su, saison = "été")[, c("x","y","saison")],
+  transform(obs_long, x = x_wi, y = y_wi, saison = "hiver")[, c("x","y","saison")]
 )
+
 p_after <- ggplot(after_df, aes(x = x, y = y, color = saison)) +
-  geom_point(size = 0.55, alpha = 0.9) +
+  geom_point(size = 0.6, alpha = 0.9) +
   scale_color_manual(values = cols_season) +
   coord_equal(xlim = xlim_all, ylim = ylim_all, expand = FALSE) +
-  square_theme + labs(title = "APRÈS Ω — Été & Hiver", x = "x", y = "y", color = "Saison")
+  theme_sq +
+  labs(title = "APRÈS Ω — Été & Hiver", x = "x", y = "y", color = "Saison")
+
 
 # Disposition (figure "points simulés")
 fig_points <- (p_before | p_after) / (p_su_omega | p_wi_omega)
@@ -868,6 +947,10 @@ z_corr_obs  <- factor(assign_corr, levels = as.character(1:K))
 pairs_true <- data.frame(lonA = X_obs_any[,1], latA = X_obs_any[,2],
                          lonB = X_obs_any[,3], latB = X_obs_any[,4],
                          cluster = z_true_obs)
+
+# 👉 Réduit le nombre de segments pour alléger le plot
+pairs_true <- pairs_true[sample(nrow(pairs_true), min(1000, nrow(pairs_true))), ]
+
 pairs_corr <- transform(pairs_true, cluster = z_corr_obs)
 
 # Ellipses combinées (été + hiver)
